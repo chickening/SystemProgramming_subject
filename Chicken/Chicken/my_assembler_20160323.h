@@ -76,6 +76,15 @@ typedef struct rsrvt_var
 	char symbol[10];
 	rvn * next;
 }rv;
+enum nixbpe_
+{
+	MODE_E = 1 << 0,		// m : mode 
+	MODE_P = 1 << 1,
+	MODE_B = 1 << 2,
+	MODE_X = 1 << 3,
+	MODE_I = 1 << 4,
+	MODE_N = 1 << 5
+};
 //--------------
 
 static char *input_file;
@@ -92,3 +101,5 @@ void make_opcode_output(char *file_name);
 static int assem_pass2(void);
 void make_objectcode_output(char *file_name);
 void make_symtab_output(char * file_name);
+int is_register(char * str);	//str 이 레지스터인지 확인
+int find_symbol(char * str);	//Symbol index 찾기

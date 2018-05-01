@@ -154,6 +154,16 @@ int init_input_file(char *input_file)
  * 주의 : my_assembler 프로그램에서는 라인단위로 토큰 및 오브젝트 관리를 하고 있다. 
  * ----------------------------------------------------------------------------------
  */
+int is_register(char * str)
+{
+	char registers[8][3] = { "PC","SW","X","A","S","T","B","F" };
+	int r = 0;
+	for (int i = 0; i < 8; i++)
+		if (!strcmp(str, registers[i]))
+			r = 1;
+	return r;
+
+}
 int token_parsing(char *str)
 {
 	token_table[token_line] = (token*)malloc(sizeof(token));
@@ -300,6 +310,8 @@ int token_parsing(char *str)
 	}
 	if (token_table[token_line]->operator != NULL)	// 현재 주소 더하기
 	{
+
+		int add_addr = 0;
 		if (!strcmp("RESB", token_table[token_line]->operator))
 			locctr += atoi(token_table[token_line]->operand[0]);
 		else if (!strcmp("RESW", token_table[token_line]->operator))
@@ -310,11 +322,38 @@ int token_parsing(char *str)
 			resv_addr = 0;
 		}
 		else if (token_table[token_line]->operator[0] == '+')	//주의
-			locctr += 4;
+			locctr += (add_addr = 4);
 		else
-			locctr += inst_table[search_opcode(token_table[token_line]->operator)]->type;
+			locctr += (add_addr = inst_table[search_opcode(token_table[token_line]->operator)]->type);\
 	}
 
+	token_table[token_line]->nixbpe = 0;
+	if (token_table[token_line]->operator != NULL && inst_table[search_opcode(token_table[token_line]->operator)]->type >= 3)	// nixbpe
+	{
+		if (token_table[token_line]->operator[0] == '+')
+			token_table[token_line]->nixbpe |= MODE_E;
+		
+		if (token_table[token_line]->operand[0] != NULL)
+		{
+			if (token_table[token_line]->operand[0][0] == '@')
+				token_table[token_line]->nixbpe |= MODE_N;
+			else if (token_table[token_line]->operand[0][0] == '#')
+				token_table[token_line]->nixbpe |= MODE_I;
+			else
+			{
+				token_table[token_line]->nixbpe |= MODE_N;
+				token_table[token_line]->nixbpe |= MODE_I;
+			}
+			if(!is_register(token_table[token_line]->operand[0]) && token_table[token_line]->operand[0][0] != '#')
+				token_table[token_line]->nixbpe |= MODE_P;
+		}
+		if(token_table[token_line]->operand[1] != NULL)
+			if(!strcmp("X", token_table[token_line]->operand[1]))
+				token_table[token_line]->nixbpe |= MODE_X;
+	}
+
+	//printf("%s\t%X %X\n", str, (token_table[token_line]->nixbpe & (MODE_N | MODE_I)) >> 4 , token_table[token_line]->nixbpe & (MODE_I - 1));
+	
 	/*추가 부분 현재 주소값에다가 주소 크기값 더하기*/
 	++token_line;	//다음 토큰을 파싱하기위해서
 }
@@ -358,11 +397,6 @@ static int assem_pass1(void)
 	token_line = 0;
 	for (int i = 0; i < line_num; i++)	//토큰수는 라인수와 같음
 		token_parsing(input_data[i]);
-
-	for (int i = 0; i < line_num; i++)
-	{
-
-	}
 }
 
 
@@ -433,9 +467,38 @@ void make_opcode_output(char *file_name)
 * 주의 :
 * -----------------------------------------------------------------------------------
 */
+
 static int assem_pass2(void)
 {
+	int mc_lang = 0;	//기게어
+	for (int i = 0; i < line_num; i++)
+	{
+		if (token_table[i] ->operator != NULL)
+		{
+			int op = 0;
+			sscanf(inst_table[search_opcode(token_table[i]->operator)]->opcode, "%d", &op);
 
+			int format_type = inst_table[search_opcode(token_table[i]->operator)]->type;
+			if (token_table[i]->nixbpe & MODE_E)
+				format_type = 4;
+
+			if (format_type == 4)
+			{
+				mc_lang |= op << 25;
+				mc_lang |= token_table[i]->nixbpe << 19;
+
+			}
+			else if (format_type == 3)	// 0 이 아니면 3 형식
+			{
+				mc_lang |= op << 17;
+				mc_lang |= token_table[i]->nixbpe << 11;
+			}
+			else if (format_type == 2)
+				mc_lang |= op << 7;
+			else if (format_type == 1)
+				mc_lang |= op;
+		}
+	}
 	
 
 }
@@ -463,4 +526,17 @@ void make_symtab_output(char * file_name)
 		return;
 	for (int i = 0; i < sym_table_size; i++)
 		fprintf(fp,"%s\t%X\n", sym_table[i].symbol, sym_table[i].addr);
+}
+// 심볼 이름으로 심볼 인덱스를 찾아주는 함수
+// return 값
+// 정상 : 심볼의 인덱스 값
+// 실패 : -1
+int find_symbol(char * str)
+{
+	for (int i = 0; i < sym_table_size; i++)
+	{
+		if (!strcmp(str, sym_table[i].symbol))
+			return i;
+	}
+	return -1;
 }
