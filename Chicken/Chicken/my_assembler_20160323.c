@@ -327,31 +327,6 @@ int token_parsing(char *str)
 			locctr += (add_addr = inst_table[search_opcode(token_table[token_line]->operator)]->type);\
 	}
 
-	token_table[token_line]->nixbpe = 0;
-	if (token_table[token_line]->operator != NULL && inst_table[search_opcode(token_table[token_line]->operator)]->type >= 3)	// nixbpe
-	{
-		if (token_table[token_line]->operator[0] == '+')
-			token_table[token_line]->nixbpe |= MODE_E;
-		
-		if (token_table[token_line]->operand[0] != NULL)
-		{
-			if (token_table[token_line]->operand[0][0] == '@')
-				token_table[token_line]->nixbpe |= MODE_N;
-			else if (token_table[token_line]->operand[0][0] == '#')
-				token_table[token_line]->nixbpe |= MODE_I;
-			else
-			{
-				token_table[token_line]->nixbpe |= MODE_N;
-				token_table[token_line]->nixbpe |= MODE_I;
-			}
-			if(!is_register(token_table[token_line]->operand[0]) && token_table[token_line]->operand[0][0] != '#')
-				token_table[token_line]->nixbpe |= MODE_P;
-		}
-		if(token_table[token_line]->operand[1] != NULL)
-			if(!strcmp("X", token_table[token_line]->operand[1]))
-				token_table[token_line]->nixbpe |= MODE_X;
-	}
-
 	//printf("%s\t%X %X\n", str, (token_table[token_line]->nixbpe & (MODE_N | MODE_I)) >> 4 , token_table[token_line]->nixbpe & (MODE_I - 1));
 	
 	/*추가 부분 현재 주소값에다가 주소 크기값 더하기*/
@@ -397,6 +372,38 @@ static int assem_pass1(void)
 	token_line = 0;
 	for (int i = 0; i < line_num; i++)	//토큰수는 라인수와 같음
 		token_parsing(input_data[i]);
+	
+	for (int i = 0; i < line_num; i++)
+	{
+		token_table[i]->nixbpe = 0;
+		if (token_table[i]->operator != NULL && inst_table[search_opcode(token_table[i]->operator)]->type >= 3)	// nixbpe
+		{
+			if (token_table[i]->operator[0] == '+')
+				token_table[i]->nixbpe |= MODE_E;
+
+			if (token_table[i]->operand[0] != NULL)
+			{
+				if (token_table[i]->operand[0][0] == '@')
+					token_table[i]->nixbpe |= MODE_N;
+				else if (token_table[i]->operand[0][0] == '#')
+					token_table[i]->nixbpe |= MODE_I;
+				else
+				{
+					token_table[i]->nixbpe |= MODE_N;
+					token_table[i]->nixbpe |= MODE_I;
+				}
+				if (!is_register(token_table[i]->operand[0]) && token_table[i]->operand[0][0] != '#')
+				{
+					if (find_pc_symbol_by_line(token_table[i]->operand[0], i))
+						token_table[i]->nixbpe |= MODE_P;
+				}
+
+			}
+			if (token_table[i]->operand[1] != NULL)
+				if (!strcmp("X", token_table[i]->operand[1]))
+					token_table[i]->nixbpe |= MODE_X;
+		}
+	}
 }
 
 
@@ -478,14 +485,14 @@ static int assem_pass2(void)
 			int op = 0;
 			sscanf(inst_table[search_opcode(token_table[i]->operator)]->opcode, "%d", &op);
 
-			int format_type = inst_table[search_opcode(token_table[i]->operator)]->type;
-			if (token_table[i]->nixbpe & MODE_E)
-				format_type = 4;
+			int format_type = get_byte_inst(token_table[i]->operator);
 
 			if (format_type == 4)
 			{
-				mc_lang |= op << 25;
-				mc_lang |= token_table[i]->nixbpe << 19;
+				mc_lang &= (1 << 20) - 1;
+				mc_lang |= token_table[i]->nixbpe << 20;
+				mc_lang &= (1 << 26) - 1;
+				mc_lang |= ((op >> 2) << 26);
 
 			}
 			else if (format_type == 3)	// 0 이 아니면 3 형식
@@ -539,4 +546,69 @@ int find_symbol(char * str)
 			return i;
 	}
 	return -1;
+}
+
+int is_start_operator(char * str)
+{
+	int r = 0;
+	if (str != NULL)
+	{
+		if (!strcmp(str, "START"))
+			r = 1;
+		else if (!strcmp(str, "CSECT"))
+			r = 1;
+	}
+	return r;
+}
+int is_end_operator(char * str)
+{
+	int r = 0;
+	if (str != NULL)
+	{
+		if (!strcmp(str, "END"))
+			r = 1;
+		else if (!strcmp(str, "CSECT"))
+			r = 1;
+	}
+	return r;
+}
+
+int find_pc_symbol_by_line(char * str, int line)	//pc relative 가 가능한 symbol 찾기 찾으면 addr 반환 아니면 -1
+{
+	int r = -1;
+	for (int i = line - 1; i >= 0; i--)
+	{
+		if (token_table[i]->label != NULL && !strcmp(token_table[i]->label, str))
+		{
+			r = sym_table[find_symbol(str)].addr;
+			break;
+		}
+		if (is_start_operator(token_table[i]->operator))
+			break;
+	}
+	for (int i = line + 1; i < line_num; i++)
+	{
+		if (is_end_operator(token_table[i]->operator))
+			break;
+		if (token_table[i]->label != NULL && !strcmp(token_table[i]->label, str))
+		{
+			r = sym_table[find_symbol(str)].addr;
+			break;
+		}
+	}
+	return r;
+}
+int get_byte_inst(char * operator)	//명령어 바이트 크기 구하기 0 ~ 4
+{
+	int r = 0;
+	if (operator != NULL && strlen(operator) > 2)
+	{
+		if (operator[0] == '+')
+			r = 4;
+		else
+		{
+			r = inst_table[search_opcode(operator)]->type;
+		}
+	}
+	return r;
 }
